@@ -2,7 +2,6 @@ const express = require("express");
 const app = express();
 const bodyParser = require("body-parser");
 const multer = require("multer");
-const exceljs = require("exceljs");
 const xlsx = require("xlsx");
 const { format } = require("date-fns");
 var cors = require("cors");
@@ -16,39 +15,6 @@ app.use(cors());
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// app.post("/api/upload", upload.single("file"), async (req, res,next) => {
-//     try {
-//       const fileBuffer = req.file.buffer;
-//       const workbook = new exceljs.Workbook();
-//       const worksheet = await workbook.xlsx.load(fileBuffer).then(() => {
-//         return workbook.getWorksheet(1);
-//       });
-
-//     const columnData = [];
-
-//      worksheet.eachRow({ includeEmpty: false }, async (row, rowNumber) => {
-//       if (rowNumber === 1) return;
-//       console.log(rowNumber)
-
-//       const data = row.values.slice(1);
-
-//        console.log(data)
-//       const insertDataQuery = `
-//         INSERT INTO (employeeid, employeename, employeestatus, joiningdate, birthdate, skills, salarydetails, address, phonenumber)
-//         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)  RETURNING *
-//       `;
-
-//       await pool.query(insertDataQuery, data);
-//       // columnData.push(data)
-//       res.status(200).json({ success: true, data: {data}});
-//     });
-
-//     } catch (error) {
-//       console.error(error);
-//       res.status(500).json({ success: false, message: "Internal Server Error" });
-//     }
-//   });
-
 app.post("/api/upload", upload.single("file"), (req, res) => {
   const buffer = req.file.buffer;
   const workbook = xlsx.read(buffer, { type: "buffer" });
@@ -56,11 +22,8 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
   const rows = xlsx.utils.sheet_to_json(sheet, { cellDates: true });
 
   const columns = Object.keys(rows[0]);
-  
 
-  console.log(rows[0].joiningdate)
-
-  const tableName = `employee_${Date.now()}`;
+  const tableName = `employee`;
   const createTableQuery = `CREATE TABLE IF NOT EXISTS ${tableName} (${columns
     .map((column) => `${column} ${getColumnDataType(column)}`)
     .join(", ")});`;
@@ -106,7 +69,7 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
           } else {
             res
               .status(200)
-              .json({ success: true, message: "Category Added Successfully" });
+              .json({ success: true, message: "File Uploaded Successfully" });
           }
         });
       }
@@ -125,7 +88,6 @@ function getColumnDataType(column) {
   }
 }
 
-
 function parseColumnValue(value, dataType) {
   if (dataType === "SERIAL" || typeof value === "number") {
     return value;
@@ -137,7 +99,110 @@ function parseColumnValue(value, dataType) {
   }
 }
 
+app.post("/api/addEmployee", async (req, res, next) => {
+  try {
+    const {
+      employeeid,
+      employeename,
+      employeestatus,
+      joiningdate,
+      birthdate,
+      skills,
+      salarydetails,
+      address,
+      phonenumber,
+      designation,
+    } = req.body;
 
+    const existingEmployeeById = await pool.query(
+      "SELECT * FROM employee WHERE employeeid = $1",
+      [employeeid]
+    );
+
+    if (existingEmployeeById.rows.length > 0) {
+      return res
+        .status(401)
+        .json({ message: "Employee with this ID already exists!" });
+    }
+
+    // Check if employee with employeename already exists
+    const existingEmployeeByName = await pool.query(
+      "SELECT * FROM employee WHERE employeename = $1",
+      [employeename]
+    );
+
+    if (existingEmployeeByName.rows.length > 0) {
+      return res
+        .status(401)
+        .json({ message: "Employee with this Name already exists!" });
+    }
+
+    const result = await pool.query(
+      "INSERT INTO employee (employeeid,employeename,employeestatus,joiningdate,birthdate,skills,salarydetails,address,phonenumber,designation) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING * ",
+      [
+        employeeid,
+        employeename,
+        employeestatus,
+        joiningdate,
+        birthdate,
+        skills,
+        salarydetails,
+        address,
+        phonenumber,
+        designation,
+      ]
+    );
+
+    return res.status(200).json({ message: "Employee Added Successfully" });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch("/api/updateEmployee/:id", (req, res, next) => {
+  let { employeename, designation, address, salarydetails } = req.body;
+  const employeeid = req.params.id;
+  pool.query(
+    "UPDATE employee SET employeename = ($2), designation = ($3), address = ($4), salarydetails = ($5) WHERE employeeid = $1",
+    [employeeid, employeename, designation, address, salarydetails],
+    (err, result) => {
+      if (!err) {
+        if (result.rowCount == 0) {
+          return res
+            .status(404)
+            .json({ message: "Employee id does not found" });
+        }
+        return res
+          .status(200)
+          .json({ message: "Employee Updated Successfully" });
+      } else {
+        return res.status(500).json(err);
+      }
+    }
+  );
+});
+
+app.delete("/api/deleteEmployee/:id", (req, res, next) => {
+  const employeeid = req.params.id;
+  pool.query(
+    "DELETE FROM employee WHERE employeeid = $1",
+    [employeeid],
+    (err, result) => {
+      if (!err) {
+        if (result.rowCount == 0) {
+          return res
+            .status(404)
+            .json({ message: "Employee id does not found" });
+        }
+        return res
+          .status(200)
+          .json({ message: "Employee Deleted Successfully" });
+      } else {
+        return res.status(500).json(err);
+      }
+    }
+  );
+});
 
 app.listen(process.env.PORT, () => {
   console.log(`Server is running on port ${process.env.PORT}`);
